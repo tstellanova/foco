@@ -1,0 +1,12 @@
+[package]
+name = "foco"
+version = "0.1.0"
+authors = ["Todd Stellanova <tstellanova@users.noreply.github.com>"]
+edition = "2018"
+
+
+[dependencies]
+spmc_ring = {git="https://github.com/tstellanova/spmc_ring"}
+generic-array = "0.14.2"
+nb = {version="0.1.2"}
+array-macro = "1.0.5"
