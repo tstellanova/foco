@@ -7,7 +7,9 @@ LICENSE: BSD3 (see LICENSE file)
 
 use array_macro::array;
 use core::marker::PhantomData;
-/// The gossip system should
+
+
+/// The foco system should
 /// - allow publishers to broadcast messages on particular topics
 /// - allow subscribers to subscribe to topics
 /// - allow multiple publishers on a single topic (with unique publisher instance ids )
@@ -16,7 +18,8 @@ use core::marker::PhantomData;
 ///
 /// The gossip system comprises:
 /// - One message queue per topic, per publisher (SPMC queue)
-/// - multiple readers poll the queue for messages (subscribe)
+/// - One rust type per topic
+/// - Multiple readers poll the queue for messages (subscribe)
 
 /// We know the list of topics+types at compile time
 /// We could define a message type as a compound type of the topic and "primitive" type
@@ -31,8 +34,11 @@ pub type PublisherId = u32;
 const ANY_PUBLISHER: PublisherId = 0;
 type DefaultQueueSize = generic_array::typenum::U20;
 
+/// Defines meta information for a topic
 pub trait TopicMeta {
+    /// The concrete message type published on a topic
     type MsgType;
+    /// A string topic label
     const TOPIC: &'static str;
 }
 
@@ -42,7 +48,8 @@ pub struct Advertisement<M>
 where
     M: TopicMeta + Copy,
 {
-    advertiser_id: PublisherId,
+    pub advertiser_id: PublisherId,
+    /// This just marks the msg type of the advertisement
     meta: PhantomData<*const M>,
 }
 
@@ -137,7 +144,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{TopicMeta, Registrar, ANY_PUBLISHER};
 
     #[derive(Default, Copy, Clone)]
     struct Point {
@@ -179,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn two_queues_same_type_diff_topics() {
+    fn two_queues_same_inner_type_diff_topics() {
         let mut reg1: Registrar<HomeLocation> = Registrar::new();
         let adv1 = reg1.advertise();
         //let mut sb1 = reg1.subscribe(ANY_PUBLISHER).unwrap();
@@ -194,6 +201,27 @@ mod tests {
             // we publish on queue1, no data on queue2 yet
             let next_msg_r = reg2.poll(&mut sb2);
             assert!(next_msg_r.is_err());
+        }
+    }
+
+    #[test]
+    fn two_queues_same_topic() {
+        let mut reg: Registrar<HomeLocation> = Registrar::new();
+        let adv1 = reg.advertise();
+        let mut sb1 = reg.subscribe(ANY_PUBLISHER).unwrap();
+
+        let adv2 = reg.advertise();
+        let mut sb2 = reg.subscribe(adv2.advertiser_id).unwrap();
+
+        for i in 0..5 {
+            let msg = Point { x: i, y: i };
+            reg.publish(&adv1, &msg);
+            // we publish on queue1, no data on queue2 yet
+            let next_msg_r = reg.poll(&mut sb2);
+            assert!(next_msg_r.is_err());
+            reg.publish(&adv2, &msg);
+            let next_msg_r = reg.poll(&mut sb2);
+            assert!(next_msg_r.is_ok());
         }
     }
 }
