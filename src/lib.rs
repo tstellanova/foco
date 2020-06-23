@@ -5,6 +5,7 @@ LICENSE: BSD3 (see LICENSE file)
 
 #![cfg_attr(not(test), no_std)]
 
+use core::sync::atomic::{AtomicU32, Ordering};
 use array_macro::array;
 use core::marker::PhantomData;
 
@@ -16,7 +17,7 @@ use core::marker::PhantomData;
 /// - allow subscribers to filter on any publisher, or specific set of publishers
 /// - allow a QoS agent to prioritize some publisher instances over others on a topic
 ///
-/// The gossip system comprises:
+/// The foco system comprises:
 /// - One message queue per topic, per publisher (SPMC queue)
 /// - One rust type per topic
 /// - Multiple readers poll the queue for messages (subscribe)
@@ -81,7 +82,7 @@ pub struct Registrar<M>
 where
     M: TopicMeta + Default + Copy,
 {
-    advertiser_count: usize,
+    advertiser_count: AtomicU32,
     topic_queues: [SpmcQueue<<M as TopicMeta>::MsgType, DefaultQueueSize>; MAX_QUEUES_PER_TOPIC],
 }
 
@@ -92,7 +93,7 @@ where
 {
     fn new() -> Self {
         Self {
-            advertiser_count: 0,
+            advertiser_count: AtomicU32::new(0),
             topic_queues: array![SpmcQueue::default(); MAX_QUEUES_PER_TOPIC],
         }
     }
@@ -100,7 +101,7 @@ where
     /// Subscribe to a topic (and specific instance if desired)
     ///
     pub fn subscribe(&mut self, instance: PublisherId) -> Option<Subscription<M>> {
-        if instance != ANY_PUBLISHER && instance >= self.advertiser_count as u32 {
+        if instance != ANY_PUBLISHER && instance >= self.advertiser_count.load(Ordering::SeqCst)  {
             //requested a specific advertiser that doesn't exist
             return None;
         }
@@ -115,9 +116,9 @@ where
 
     /// Advertise on a topic.  This provides a publisher a route to publication
     pub fn advertise(&mut self) -> Advertisement<M> {
-        let advert = Advertisement::new(self.advertiser_count as u32);
-        //TODO check for advertiser overflow
-        self.advertiser_count += 1;
+        //TODO guard against too many advertisers / too few queues
+        let publisher_id = self.advertiser_count.fetch_add(1, Ordering::SeqCst);
+        let advert = Advertisement::new(publisher_id);
         advert
     }
 
@@ -208,7 +209,7 @@ mod tests {
     fn two_queues_same_topic() {
         let mut reg: Registrar<HomeLocation> = Registrar::new();
         let adv1 = reg.advertise();
-        let mut sb1 = reg.subscribe(ANY_PUBLISHER).unwrap();
+        //let mut sb1 = reg.subscribe(ANY_PUBLISHER).unwrap();
 
         let adv2 = reg.advertise();
         let mut sb2 = reg.subscribe(adv2.advertiser_id).unwrap();
