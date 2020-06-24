@@ -5,10 +5,9 @@ LICENSE: BSD3 (see LICENSE file)
 
 #![cfg_attr(not(test), no_std)]
 
-use core::sync::atomic::{AtomicU32, Ordering};
 use array_macro::array;
 use core::marker::PhantomData;
-
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// The foco system should
 /// - allow publishers to broadcast messages on particular topics
@@ -32,8 +31,8 @@ use core::marker::PhantomData;
 use spmc_ring::{ReadToken, SpmcQueue};
 
 pub type PublisherId = u32;
-const ANY_PUBLISHER: PublisherId = 0;
-type DefaultQueueSize = generic_array::typenum::U20;
+pub const ANY_PUBLISHER: PublisherId = 0;
+pub const MAX_PUBLISHERS_PER_TOPIC: u32 = 4;
 
 /// Defines meta information for a topic
 pub trait TopicMeta {
@@ -74,19 +73,20 @@ where
     pub(crate) read_token: ReadToken,
 }
 
-const MAX_QUEUES_PER_TOPIC: usize = 8;
+type DefaultQueueSize = generic_array::typenum::U20;
 
-/// One Registrar per type:
-/// Each Registrar provides a map from topic to queue instance
-pub struct Registrar<M>
+/// One message Broker per topic-constrained type
+/// Each Broker provides a map from topic to message queue
+pub struct Broker<M>
 where
     M: TopicMeta + Default + Copy,
 {
     advertiser_count: AtomicU32,
-    topic_queues: [SpmcQueue<<M as TopicMeta>::MsgType, DefaultQueueSize>; MAX_QUEUES_PER_TOPIC],
+    topic_queues:
+        [SpmcQueue<<M as TopicMeta>::MsgType, DefaultQueueSize>; MAX_PUBLISHERS_PER_TOPIC as usize],
 }
 
-impl<M> Registrar<M>
+impl<M> Broker<M>
 where
     M: TopicMeta + Default + Copy,
     <M as TopicMeta>::MsgType: Default + Copy,
@@ -94,14 +94,13 @@ where
     fn new() -> Self {
         Self {
             advertiser_count: AtomicU32::new(0),
-            topic_queues: array![SpmcQueue::default(); MAX_QUEUES_PER_TOPIC],
+            topic_queues: array![SpmcQueue::default(); MAX_PUBLISHERS_PER_TOPIC as usize],
         }
     }
 
     /// Subscribe to a topic (and specific instance if desired)
-    ///
     pub fn subscribe(&mut self, instance: PublisherId) -> Option<Subscription<M>> {
-        if instance != ANY_PUBLISHER && instance >= self.advertiser_count.load(Ordering::SeqCst)  {
+        if instance != ANY_PUBLISHER && instance >= self.advertiser_count.load(Ordering::SeqCst) {
             //requested a specific advertiser that doesn't exist
             return None;
         }
@@ -115,16 +114,26 @@ where
     }
 
     /// Advertise on a topic.  This provides a publisher a route to publication
-    pub fn advertise(&mut self) -> Advertisement<M> {
-        //TODO guard against too many advertisers / too few queues
+    pub fn advertise(&mut self) -> Option<Advertisement<M>> {
+        //optimistically try to advertise this publisher
         let publisher_id = self.advertiser_count.fetch_add(1, Ordering::SeqCst);
-        let advert = Advertisement::new(publisher_id);
-        advert
+        if publisher_id < MAX_PUBLISHERS_PER_TOPIC {
+            let advert = Advertisement::new(publisher_id);
+            Some(advert)
+        } else {
+            self.advertiser_count.fetch_sub(1, Ordering::SeqCst);
+            None
+        }
     }
 
     /// Publish a new message on the topic
     pub fn publish(&mut self, advert: &Advertisement<M>, msg: &M::MsgType) {
         self.queue_for_advert(advert).publish(msg)
+    }
+
+    /// Has this publisher already advertised?
+    pub fn pub_advertised(&self, instance: PublisherId) -> bool {
+        instance < self.advertiser_count.load(Ordering::Relaxed)
     }
 
     /// Read the next message from the topic
@@ -133,6 +142,7 @@ where
             .read_next(&mut sub.read_token)
     }
 
+    /// Obtain the queue for a particular advertisement (a specific publisher)
     fn queue_for_advert(
         &mut self,
         advert: &Advertisement<M>,
@@ -145,7 +155,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{TopicMeta, Registrar, ANY_PUBLISHER};
+    use super::{Broker, TopicMeta, ANY_PUBLISHER};
 
     #[derive(Default, Copy, Clone)]
     struct Point {
@@ -169,14 +179,15 @@ mod tests {
 
     #[test]
     fn setup_pubsub() {
-        let mut reggo: Registrar<HomeLocation> = Registrar::new();
-        let adv = reggo.advertise();
-        let mut sb = reggo.subscribe(ANY_PUBLISHER).unwrap();
+        let mut broker: Broker<HomeLocation> = Broker::new();
+        let adv = broker.advertise().unwrap();
+        assert!(broker.pub_advertised(0));
+        let mut sb = broker.subscribe(ANY_PUBLISHER).unwrap();
 
         for i in 0..5 {
             let msg = Point { x: i, y: i };
-            reggo.publish(&adv, &msg);
-            let next_msg_r = reggo.poll(&mut sb);
+            broker.publish(&adv, &msg);
+            let next_msg_r = broker.poll(&mut sb);
             assert!(next_msg_r.is_ok());
 
             let next_msg = next_msg_r.unwrap();
@@ -188,40 +199,38 @@ mod tests {
 
     #[test]
     fn two_queues_same_inner_type_diff_topics() {
-        let mut reg1: Registrar<HomeLocation> = Registrar::new();
-        let adv1 = reg1.advertise();
-        //let mut sb1 = reg1.subscribe(ANY_PUBLISHER).unwrap();
-
-        let mut reg2: Registrar<RoverLocation> = Registrar::new();
-        //let adv2 = reg2.advertise();
-        let mut sb2 = reg2.subscribe(ANY_PUBLISHER).unwrap();
+        let mut broker1: Broker<HomeLocation> = Broker::new();
+        let adv1 = broker1.advertise().unwrap();
+        let mut broker2: Broker<RoverLocation> = Broker::new();
+        let mut sb2 = broker2.subscribe(ANY_PUBLISHER).unwrap();
 
         for i in 0..5 {
             let msg = Point { x: i, y: i };
-            reg1.publish(&adv1, &msg);
+            broker1.publish(&adv1, &msg);
             // we publish on queue1, no data on queue2 yet
-            let next_msg_r = reg2.poll(&mut sb2);
+            let next_msg_r = broker2.poll(&mut sb2);
             assert!(next_msg_r.is_err());
         }
     }
 
     #[test]
     fn two_queues_same_topic() {
-        let mut reg: Registrar<HomeLocation> = Registrar::new();
-        let adv1 = reg.advertise();
-        //let mut sb1 = reg.subscribe(ANY_PUBLISHER).unwrap();
+        let mut broker: Broker<HomeLocation> = Broker::new();
+        let adv1 = broker.advertise().unwrap();
+        let adv2 = broker.advertise().unwrap();
+        assert!(broker.pub_advertised(0));
+        assert!(broker.pub_advertised(1));
 
-        let adv2 = reg.advertise();
-        let mut sb2 = reg.subscribe(adv2.advertiser_id).unwrap();
+        let mut sb2 = broker.subscribe(adv2.advertiser_id).unwrap();
 
         for i in 0..5 {
             let msg = Point { x: i, y: i };
-            reg.publish(&adv1, &msg);
+            broker.publish(&adv1, &msg);
             // we publish on queue1, no data on queue2 yet
-            let next_msg_r = reg.poll(&mut sb2);
+            let next_msg_r = broker.poll(&mut sb2);
             assert!(next_msg_r.is_err());
-            reg.publish(&adv2, &msg);
-            let next_msg_r = reg.poll(&mut sb2);
+            broker.publish(&adv2, &msg);
+            let next_msg_r = broker.poll(&mut sb2);
             assert!(next_msg_r.is_ok());
         }
     }
