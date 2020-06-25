@@ -6,8 +6,8 @@ edition = "2018"
 
 
 [dependencies]
-spmc_ring = { git="https://github.com/tstellanova/spmc_ring", branch="trunk" }
-#spmc_ring = {path="../spmc_ring"}
+#spms_ring = {path="../spms_ring"}
+spms_ring = { git="https://github.com/tstellanova/spms_ring", branch="trunk" }
 generic-array = "0.14.2"
 nb = {version="0.1.2"}
 array-macro = "1.0.5"
