@@ -221,6 +221,7 @@ mod tests {
         assert!(broker.pub_advertised(0));
         assert!(broker.pub_advertised(1));
 
+        //TODO s/b Some/None Advertiser?
         let mut sb2 = broker.subscribe(adv2.advertiser_id).unwrap();
 
         for i in 0..5 {
