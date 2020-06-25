@@ -28,7 +28,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 /// But what if this is a library? We would not know all the publishers
 /// Allow the library to be built with message/topic definition files
 ///
-use spmc_ring::{ReadToken, SpmcQueue};
+use spms_ring::{ReadToken, SpmsRing };
 
 pub type PublisherId = u32;
 pub const ANY_PUBLISHER: PublisherId = 0;
@@ -83,7 +83,7 @@ where
 {
     advertiser_count: AtomicU32,
     topic_queues:
-        [SpmcQueue<<M as TopicMeta>::MsgType, DefaultQueueSize>; MAX_PUBLISHERS_PER_TOPIC as usize],
+        [SpmsRing<<M as TopicMeta>::MsgType, DefaultQueueSize>; MAX_PUBLISHERS_PER_TOPIC as usize],
 }
 
 impl<M> Broker<M>
@@ -94,7 +94,7 @@ where
     fn new() -> Self {
         Self {
             advertiser_count: AtomicU32::new(0),
-            topic_queues: array![SpmcQueue::default(); MAX_PUBLISHERS_PER_TOPIC as usize],
+            topic_queues: array![SpmsRing::default(); MAX_PUBLISHERS_PER_TOPIC as usize],
         }
     }
 
@@ -146,7 +146,7 @@ where
     fn queue_for_advert(
         &mut self,
         advert: &Advertisement<M>,
-    ) -> &mut SpmcQueue<M::MsgType, DefaultQueueSize> {
+    ) -> &mut SpmsRing<M::MsgType, DefaultQueueSize> {
         //advert.instance
         let qi = advert.advertiser_id as usize;
         &mut self.topic_queues[qi]
