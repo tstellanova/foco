@@ -28,7 +28,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 /// But what if this is a library? We would not know all the publishers
 /// Allow the library to be built with message/topic definition files
 ///
-use spms_ring::{ReadToken, SpmsRing };
+use spms_ring::{ReadToken, SpmsRing};
 
 pub type PublisherId = u32;
 pub const ANY_PUBLISHER: PublisherId = 0;
@@ -49,7 +49,7 @@ where
     M: TopicMeta + Copy,
 {
     pub advertiser_id: PublisherId,
-    /// This just marks the msg type of the advertisement
+    // This just marks the msg type of the advertisement
     meta: PhantomData<*const M>,
 }
 
@@ -128,7 +128,9 @@ where
 
     /// Publish a new message on the topic
     pub fn publish(&mut self, advert: &Advertisement<M>, msg: &M::MsgType) {
-        self.queue_for_advert(advert).publish(msg)
+        if advert.advertiser_id < self.advertiser_count.load(Ordering::Relaxed) {
+            self.topic_queues[advert.advertiser_id as usize].publish(msg)
+        }
     }
 
     /// Has this publisher already advertised?
@@ -144,19 +146,12 @@ where
     }
 
     /// Read the next message from the topic
-    pub fn poll(&mut self, sub: &mut Subscription<M>) -> nb::Result<M::MsgType, ()> {
-        self.queue_for_advert(&sub.advert)
-            .read_next(&mut sub.read_token)
-    }
-
-    /// Obtain the queue for a particular advertisement (a specific publisher)
-    fn queue_for_advert(
-        &mut self,
-        advert: &Advertisement<M>,
-    ) -> &mut SpmsRing<M::MsgType, DefaultQueueSize> {
-        //advert.instance
-        let qi = advert.advertiser_id as usize;
-        &mut self.topic_queues[qi]
+    pub fn poll(&self, sub: &mut Subscription<M>) -> nb::Result<M::MsgType, ()> {
+        if sub.advert.advertiser_id < self.advertiser_count.load(Ordering::Relaxed) {
+            return self.topic_queues[sub.advert.advertiser_id as usize]
+                .read_next(&mut sub.read_token);
+        }
+        Err(nb::Error::Other(()))
     }
 }
 
