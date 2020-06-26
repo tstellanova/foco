@@ -91,7 +91,7 @@ where
     M: TopicMeta + Default + Copy,
     <M as TopicMeta>::MsgType: Default + Copy,
 {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             advertiser_count: AtomicU32::new(0),
             topic_queues: array![SpmsRing::default(); MAX_PUBLISHERS_PER_TOPIC as usize],
@@ -132,8 +132,15 @@ where
     }
 
     /// Has this publisher already advertised?
-    pub fn pub_advertised(&self, instance: PublisherId) -> bool {
+    /// This merely tells the caller whether we have n >= instance
+    /// number of registered (advertised) publishers.
+    pub fn pub_registered(&self, instance: PublisherId) -> bool {
         instance < self.advertiser_count.load(Ordering::Relaxed)
+    }
+
+    /// How many publishers have advertised on this topic?
+    pub fn group_count(&self) -> u32 {
+        self.advertiser_count.load(Ordering::Relaxed)
     }
 
     /// Read the next message from the topic
@@ -181,7 +188,7 @@ mod tests {
     fn setup_pubsub() {
         let mut broker: Broker<HomeLocation> = Broker::new();
         let adv = broker.advertise().unwrap();
-        assert!(broker.pub_advertised(0));
+        assert!(broker.pub_registered(0));
         let mut sb = broker.subscribe(ANY_PUBLISHER).unwrap();
 
         for i in 0..5 {
@@ -218,8 +225,8 @@ mod tests {
         let mut broker: Broker<HomeLocation> = Broker::new();
         let adv1 = broker.advertise().unwrap();
         let adv2 = broker.advertise().unwrap();
-        assert!(broker.pub_advertised(0));
-        assert!(broker.pub_advertised(1));
+        assert!(broker.pub_registered(0));
+        assert!(broker.pub_registered(1));
 
         //TODO s/b Some/None Advertiser?
         let mut sb2 = broker.subscribe(adv2.advertiser_id).unwrap();
