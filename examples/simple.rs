@@ -12,21 +12,22 @@ struct TemperaturePoint {
 }
 
 #[derive(Default, Copy, Clone)]
-struct HotTopicType {}
+struct HotTopic {}
 
-impl TopicMeta for HotTopicType {
+impl TopicMeta for HotTopic {
     type MsgType = TemperaturePoint;
-    const TOPIC: &'static str = "hotwhere";
+    const TOPIC: &'static str = "hot_topic";
 }
 
-fn main() -> ! {
+fn main()  {
     lazy_static! {
         /// this is how we share a broker between multiple threads
-        static ref BROKER: AtomicPtr<Broker<HotTopicType>> = AtomicPtr::default();
+        static ref BROKER: AtomicPtr<Broker<HotTopic>> = AtomicPtr::default();
     };
-    let mut broker: Broker<HotTopicType> = Broker::new();
-
+    let mut broker: Broker<HotTopic> = Broker::new();
     BROKER.store(&mut broker, Ordering::Relaxed);
+
+    println!("setup publication for `{}`", HotTopic::TOPIC);
 
     let pub_thread = thread::spawn(move || {
         let advert = unsafe {
@@ -38,16 +39,13 @@ fn main() -> ! {
                 .unwrap()
         };
 
-        let mut pub_count: usize = 0;
-        loop {
+        for pub_count in 0..1000 {
             let msg = TemperaturePoint {
                 x: pub_count as u32,
                 y: pub_count as u32,
                 temperature: 21.0,
             };
-            pub_count += 1;
-            //safe because only this thread ever uses a mutable SpmsRing,
-            //and Q_PTR never changes
+
             unsafe {
                 BROKER
                     .load(Ordering::SeqCst)
@@ -56,7 +54,7 @@ fn main() -> ! {
                     .publish(&advert, &msg);
             }
 
-            thread::sleep(time::Duration::from_micros(1));
+            thread::sleep(time::Duration::from_millis(1));
         }
     });
 
@@ -70,7 +68,8 @@ fn main() -> ! {
                 .unwrap()
         };
 
-        loop {
+        let mut read_count: u32 = 0;
+        while read_count < 1000 {
             let msg_res = unsafe {
                 BROKER
                     .load(Ordering::SeqCst)
@@ -79,6 +78,7 @@ fn main() -> ! {
                     .poll(&mut subscription)
             };
             if let Ok(msg) = msg_res {
+                read_count += 1;
                 println!("msg: {:?}", msg);
             }
         }
@@ -87,5 +87,5 @@ fn main() -> ! {
     pub_thread.join().expect("pub_thread panicked");
     sub_thread.join().expect("sub_thread panicked");
 
-    loop {}
+
 }
