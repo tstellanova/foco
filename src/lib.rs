@@ -9,17 +9,17 @@ use array_macro::array;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use core::fmt::Debug;
 /// The foco system should
 /// - allow publishers to broadcast messages on particular topics
 /// - allow subscribers to subscribe to topics
 /// - allow multiple publishers on a single topic (with unique publisher instance ids )
 /// - allow subscribers to filter on any publisher, or specific set of publishers
-/// - allow a QoS agent to prioritize some publisher instances over others on a topic
 ///
 /// The foco system comprises:
 /// - One message queue per topic, per publisher (SPMC queue)
-/// - One rust type per topic
-/// - Multiple readers poll the queue for messages (subscribe)
+/// - One concrete rust type per topic
+/// - Multiple readers may poll the queue for messages (subscribe)
 
 /// We know the list of topics+types at compile time
 /// We could define a message type as a compound type of the topic and "primitive" type
@@ -42,14 +42,15 @@ pub trait TopicMeta {
     const TOPIC: &'static str;
 }
 
-/// Allows a publisher to publish messages of a given type (on a given topic)
+/// Permission token for a publisher to publish messages of a given type (on a given topic)
 #[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd)]
 pub struct Advertisement<M>
 where
     M: TopicMeta + Copy,
 {
+    /// The unique publisher id for this topic
     pub advertiser_id: PublisherId,
-    // This just marks the msg type of the advertisement
+    /// This just marks the msg type of the advertisement
     meta: PhantomData<*const M>,
 }
 
@@ -65,6 +66,8 @@ where
     }
 }
 
+/// Permission token for a subscriber to read messages from a particular
+/// topic and publisher.
 pub struct Subscription<M>
 where
     M: TopicMeta + Copy,
@@ -73,9 +76,10 @@ where
     pub(crate) read_token: ReadToken,
 }
 
-type DefaultQueueSize = generic_array::typenum::U20;
+/// The default number of messages stored in a publisher's queue
+type DefaultQueueSize = generic_array::typenum::U16;
 
-/// One message Broker per topic-constrained type
+/// One message Broker per topic-constrained type:
 /// Each Broker provides a map from topic to message queue
 pub struct Broker<M>
 where
@@ -89,7 +93,7 @@ where
 impl<M> Broker<M>
 where
     M: TopicMeta + Default + Copy,
-    <M as TopicMeta>::MsgType: Default + Copy,
+    <M as TopicMeta>::MsgType: Default + Copy + Debug,
 {
     pub fn new() -> Self {
         Self {
@@ -99,6 +103,7 @@ where
     }
 
     /// Subscribe to a topic (and specific instance if desired)
+    /// Use `ANY_PUBLISHER` to subscribe to the first available publisher
     pub fn subscribe(&mut self, instance: PublisherId) -> Option<Subscription<M>> {
         if instance != ANY_PUBLISHER && instance >= self.advertiser_count.load(Ordering::SeqCst) {
             //requested a specific advertiser that doesn't exist
@@ -121,6 +126,7 @@ where
             let advert = Advertisement::new(publisher_id);
             Some(advert)
         } else {
+            // exceeded number of allowed publishers on this topic
             self.advertiser_count.fetch_sub(1, Ordering::SeqCst);
             None
         }
@@ -146,6 +152,7 @@ where
     }
 
     /// Read the next message from the topic
+    /// Returns `nb::Error::WouldBlock` if the read would block
     pub fn poll(&self, sub: &mut Subscription<M>) -> nb::Result<M::MsgType, ()> {
         if sub.advert.advertiser_id < self.advertiser_count.load(Ordering::Relaxed) {
             return self.topic_queues[sub.advert.advertiser_id as usize]
@@ -159,20 +166,20 @@ where
 mod tests {
     use super::{Broker, TopicMeta, ANY_PUBLISHER};
 
-    #[derive(Default, Copy, Clone)]
+    #[derive(Default, Copy, Clone, Debug)]
     struct Point {
         x: u32,
         y: u32,
     }
 
-    #[derive(Default, Copy, Clone)]
+    #[derive(Default, Copy, Clone, Debug)]
     struct RoverLocation {}
     impl TopicMeta for RoverLocation {
         type MsgType = Point;
         const TOPIC: &'static str = "rover";
     }
 
-    #[derive(Default, Copy, Clone)]
+    #[derive(Default, Copy, Clone, Debug)]
     struct HomeLocation {}
     impl TopicMeta for HomeLocation {
         type MsgType = Point;

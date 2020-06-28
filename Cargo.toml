@@ -1,6 +1,6 @@
 [package]
 name = "foco"
-version = "0.1.3"
+version = "0.1.4"
 authors = ["Todd Stellanova <tstellanova@users.noreply.github.com>"]
 edition = "2018"
 description= "Topic-based strongly typed pubsub for no_std rust"
@@ -18,7 +18,7 @@ readme = "README.md"
 [dependencies]
 #spms_ring = {path="../spms_ring"}
 spms_ring = { git="https://github.com/tstellanova/spms_ring", branch="trunk" }
-#spms_ring = "0.1.3"
+#spms_ring = "0.1.4"
 generic-array = "0.14.2"
 nb = {version="0.1.2"}
 array-macro = "1.0.5"

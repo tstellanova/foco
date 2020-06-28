@@ -19,7 +19,7 @@ impl TopicMeta for HotTopic {
     const TOPIC: &'static str = "hot_topic";
 }
 
-fn main()  {
+fn main() {
     lazy_static! {
         /// this is how we share a broker between multiple threads
         static ref BROKER: AtomicPtr<Broker<HotTopic>> = AtomicPtr::default();
@@ -86,6 +86,4 @@ fn main()  {
 
     pub_thread.join().expect("pub_thread panicked");
     sub_thread.join().expect("sub_thread panicked");
-
-
 }
